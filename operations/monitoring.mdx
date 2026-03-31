@@ -1,0 +1,100 @@
+---
+title: Monitoring
+description: How to monitor the Compensaciones integration flow in SAP Cloud Platform Integration, including message processing logs and integration content status.
+---
+
+## Accessing the SAP CPI Monitor
+
+<Steps>
+  <Step title="Open Integration Suite">
+    Navigate to your SAP Integration Suite tenant and select **Monitor** from the main navigation.
+  </Step>
+  <Step title="Open Message Processing Logs">
+    Go to **Monitor > Monitor Message Processing**. This is the primary view for tracking all message executions.
+  </Step>
+  <Step title="Filter by artifact">
+    In the filter bar, set **Artifact Name** to `Compensaciones` to scope the view to this integration flow only.
+  </Step>
+</Steps>
+
+---
+
+## Message Processing Log (MPL) Statuses
+
+Each timer-triggered execution produces one or more MPL entries. The key statuses to watch:
+
+| Status | Meaning |
+|---|---|
+| **Completed** | Message processed successfully end-to-end |
+| **Failed** | An error occurred; click the entry to view the error details and attached payloads |
+| **Processing** | Message is actively being processed (or stuck — see Troubleshooting) |
+| **Escalated** | Message was escalated after processing failure |
+
+<Note>
+  Log level is set to **All events** in the collaboration properties. Every processing step — mapping, routing, adapter calls — is recorded in the MPL. This gives full trace visibility without needing to change the log level for debugging.
+</Note>
+
+---
+
+## Checking Integration Content Status
+
+<Steps>
+  <Step title="Navigate to Manage Integration Content">
+    Go to **Monitor > Manage Integration Content**.
+  </Step>
+  <Step title="Locate Compensaciones">
+    Search for `Compensaciones` (bundle version 1.0.0). The **Status** column must show **Started**.
+  </Step>
+  <Step title="If status is not Started">
+    Select the artifact and click **Start**. If it fails to start, check the deployment logs for configuration errors (missing credentials, endpoint mismatches).
+  </Step>
+</Steps>
+
+<Warning>
+  If the flow shows any status other than **Started** (e.g., **Error**, **Stopping**, **Undeployed**), no messages will be processed regardless of the timer schedule.
+</Warning>
+
+---
+
+## MPL Attachments
+
+MPL attachments are enabled on the S/4HANA HTTP adapter call (`enableMPLAttachments: true`). This means the raw request and response payloads exchanged with S/4HANA are captured and stored alongside the MPL entry.
+
+**When to use attachments:**
+
+- The XPath extraction for `Prom` or `Total` fields returns null or unexpected values
+- The S/4HANA response has an unexpected structure or namespace
+- You need to verify what payload was sent to SuccessFactors
+
+**How to access attachments:**
+
+<Steps>
+  <Step title="Open the MPL entry">
+    In **Monitor Message Processing**, click the relevant log entry.
+  </Step>
+  <Step title="Go to the Attachments tab">
+    Select the **Attachments** tab within the MPL detail view.
+  </Step>
+  <Step title="Download the payload">
+    Click the attachment to download and inspect the raw XML/JSON exchanged with S/4HANA.
+  </Step>
+</Steps>
+
+---
+
+## Typical Successful Run
+
+A normal execution of Compensaciones produces the following pattern in the MPL:
+
+1. **One parent MPL entry** is created when the timer fires.
+2. The Splitter runs sequentially across employee records — each split produces a **child MPL entry**.
+3. All child entries should reach **Completed** status.
+4. The parent entry completes once all splits finish (up to the 300-second splitter timeout).
+
+<Info>
+  The number of child MPL entries equals the number of active employees returned by the SuccessFactors EmpJob query (status `1465`). If you see fewer entries than expected, check whether the SuccessFactors query returned all records.
+</Info>
+
+<Tip>
+  Use the **Correlation ID** field in the parent MPL to find all associated child split logs — this makes it easier to trace a full run end-to-end.
+</Tip>

@@ -1,0 +1,99 @@
+---
+title: "Data Mapping"
+description: "End-to-end field mapping across SuccessFactors EmpJob, S/4HANA CartaSet, Content Modifiers, and the SuccessFactors cust_Info_Certificados UPSERT payload."
+---
+
+The flow uses two **Content Modifier** steps to extract, transform, and assemble data from multiple systems before writing to SuccessFactors.
+
+## Content Modifier 1 — Extract userId from EmpJob
+
+Executed after the General Splitter, operating on a single `EmpJob` record.
+
+### Property Table
+
+| Action | Name | Type | XPath / Expression | Data Type |
+|---|---|---|---|---|
+| Create | `userId` | xpath | `//userId` | `java.lang.String` |
+
+<Info>
+  The `userId` value extracted here is reused later as `externalCode` in Content Modifier 2, linking the SuccessFactors employee to the certificate record.
+</Info>
+
+**Body:** The message body is set to a constant (empty) — the original EmpJob XML is preserved in message properties only.
+
+---
+
+## Content Modifier 2 — Enrich with CartaSet Data and Build Output Body
+
+Executed after the Groovy namespace-cleanup script and the S/4HANA HTTP call (Request Reply 2). At this point the message body contains the cleaned CartaSet XML.
+
+### Property Table
+
+| Action | Name | Type | XPath / Expression | Data Type | Notes |
+|---|---|---|---|---|---|
+| Create | `effectiveStartDate` | expression | `${date:now:yyyy-MM-dd}` | — | Today's date at runtime |
+| Create | `promedioComisiones` | xpath | `//*[local-name()='Prom']/text()` | `java.lang.Long` | Average commissions from CartaSet |
+| Create | `totalComisiones` | xpath | `//*[local-name()='Total']/text()` | `java.lang.Long` | Total commissions from CartaSet |
+| Create | `emplStatus` | expression | `${property.emplStatus}` | `java.lang.String` | Carried forward from EmpJob |
+| Create | `externalCode` | expression | `${property.userId}` | `java.lang.String` | Copied from userId extracted in CM1 |
+
+<Note>
+  The XPath expressions for `promedioComisiones` and `totalComisiones` use `local-name()` predicates because the Groovy script strips namespace prefixes but may leave residual namespace-qualified elements depending on the response structure. Using `local-name()` ensures robust matching regardless.
+</Note>
+
+### Source → Transformation → Target Mapping
+
+| Source System | Source Field | Transformation | Target Property | Target XML Element |
+|---|---|---|---|---|
+| SuccessFactors EmpJob | `userId` | XPath `//userId` | `userId` → `externalCode` | `<externalCode>` |
+| SAP CPI Runtime | Current date | `${date:now:yyyy-MM-dd}` | `effectiveStartDate` | `<effectiveStartDate>` |
+| S/4HANA CartaSet | `Prom` | XPath `//*[local-name()='Prom']/text()` | `promedioComisiones` | `<cust_promedioComisiones>` |
+| S/4HANA CartaSet | `Total` | XPath `//*[local-name()='Total']/text()` | `totalComisiones` | `<cust_totalComisiones>` |
+| SuccessFactors EmpJob | `emplStatus` | Expression pass-through | `emplStatus` | _(not written to output)_ |
+
+---
+
+## Output XML Body
+
+Content Modifier 2 also sets the message body to the following XML structure using the `wrapContent` expression. This is the payload sent to SuccessFactors in the UPSERT call.
+
+```xml
+<cust_Info_Certificados>
+<cust_Info_Certificados>
+  <externalCode>${property.externalCode}</externalCode>
+  <effectiveStartDate>${property.effectiveStartDate}</effectiveStartDate>
+  <cust_totalComisiones>${property.totalComisiones}</cust_totalComisiones>
+  <cust_promedioComisiones>${property.promedioComisiones}</cust_promedioComisiones>
+</cust_Info_Certificados>
+</cust_Info_Certificados>
+```
+
+At runtime, with resolved property values, a representative payload looks like:
+
+```xml
+<cust_Info_Certificados>
+<cust_Info_Certificados>
+  <externalCode>10009375</externalCode>
+  <effectiveStartDate>2026-03-31</effectiveStartDate>
+  <cust_totalComisiones>15000</cust_totalComisiones>
+  <cust_promedioComisiones>5000</cust_promedioComisiones>
+</cust_Info_Certificados>
+</cust_Info_Certificados>
+```
+
+<Warning>
+  The outer and inner `<cust_Info_Certificados>` wrapper is intentional — the SuccessFactors OData V2 UPSERT adapter expects this double-wrapped structure for custom MDF entities. Do not flatten it.
+</Warning>
+
+---
+
+## UPSERT Fields (Receiver3)
+
+The SuccessFactors adapter is configured to write the following fields to `cust_Info_Certificados`:
+
+| Field | Source Property |
+|---|---|
+| `effectiveStartDate` | `${property.effectiveStartDate}` |
+| `externalCode` | `${property.externalCode}` |
+| `cust_promedioComisiones` | `${property.promedioComisiones}` |
+| `cust_totalComisiones` | `${property.totalComisiones}` |

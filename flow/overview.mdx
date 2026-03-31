@@ -1,0 +1,89 @@
+---
+title: "Integration Flow Overview"
+description: "High-level overview of the Compensaciones integration flow — participants, message flow, and process configuration."
+---
+
+The **Compensaciones** integration flow synchronizes compensation data between SAP SuccessFactors and SAP S/4HANA. On a recurring timer, it retrieves active employee job records, fetches commission totals from S/4HANA, and writes the results back to a custom SuccessFactors entity.
+
+## Process Identity
+
+| Property | Value |
+|---|---|
+| BPMN Process ID | `Process_1` |
+| Process Name | Integration Process |
+| Collaboration ID | `Collaboration_1` |
+| Transaction Timeout | 30 seconds |
+| Transactional Handling | Not Required |
+| Log Level | All events |
+
+## Participants
+
+<CardGroup cols={2}>
+  <Card title="Sender" icon="clock">
+    Timer-based trigger. No inbound HTTP sender is used — the flow is initiated exclusively by the scheduled start event (`StartEvent_4`).
+  </Card>
+  <Card title="Receiver1 — SuccessFactors EmpJob" icon="magnifying-glass">
+    **Protocol:** SuccessFactors OData V2 (GET)
+
+    Queries the `EmpJob` entity with filter `emplStatus eq '1465'` to retrieve active employees.
+  </Card>
+  <Card title="Receiver2 — S/4HANA CartaSet" icon="building">
+    **Protocol:** HTTP (GET)
+
+    Calls `ZHR_CARTAS_SRV/CartaSet` on the S/4HANA system to retrieve commission totals (`Prom`, `Total`) for each employee.
+  </Card>
+  <Card title="Receiver3 — SuccessFactors cust_Info_Certificados" icon="arrow-up-to-line">
+    **Protocol:** SuccessFactors OData V2 (UPSERT)
+
+    Writes the enriched compensation record back into the custom `cust_Info_Certificados` entity.
+  </Card>
+</CardGroup>
+
+## Message Flow
+
+The sequence of steps executed inside `Process_1`:
+
+<Steps>
+  <Step title="Start Timer 1 (StartEvent_4)">
+    The flow is triggered by a cron timer. See [Scheduling](/flow/scheduling) for the full schedule configuration.
+  </Step>
+  <Step title="Request Reply 1 — Query EmpJob (Receiver1)">
+    Issues a GET request to SuccessFactors OData V2 endpoint `EmpJob` filtered by `emplStatus eq '1465'`. The Atom XML response contains one `EmpJob` entry per active employee.
+
+    **Adapter:** `sap:SuccessFactors` v1.21 | **Auth:** Basic (`sfapiuser`)
+  </Step>
+  <Step title="General Splitter 1">
+    Splits the multi-record `EmpJob` response into individual messages using XPath expression `/EmpJob/EmpJob`. Streaming mode is enabled; processing stops on first execution error (`StopOnExecution=true`).
+  </Step>
+  <Step title="Content Modifier 1">
+    Extracts `userId` from the current split message via XPath `//userId` and stores it as a message property. See [Data Mapping](/flow/data-mapping) for property details.
+  </Step>
+  <Step title="Request Reply 2 — Query CartaSet (Receiver2)">
+    Issues a GET request to the S/4HANA OData service `ZHR_CARTAS_SRV/CartaSet` using Basic authentication. The response is an OData Atom XML payload containing `Prom` and `Total` fields.
+
+    **Adapter:** `sap:HTTP` v1.17 | **Auth:** Basic (`gperez`) | **Timeout:** 60 000 ms
+  </Step>
+  <Step title="Content Modifier 2">
+    Extracts `Prom` and `Total` from the namespace-cleaned S/4HANA response via XPath, computes `effectiveStartDate` and `externalCode`, and builds the output XML body for the UPSERT. The Groovy namespace-cleanup script runs as a separate step immediately before this one. See [Data Mapping](/flow/data-mapping) and [Groovy Script](/flow/groovy-script).
+  </Step>
+  <Step title="Request Reply 3 — UPSERT cust_Info_Certificados (Receiver3)">
+    Sends the constructed XML payload to SuccessFactors OData V2 as an UPSERT on `cust_Info_Certificados`, writing `effectiveStartDate`, `externalCode`, `cust_promedioComisiones`, and `cust_totalComisiones`.
+
+    **Adapter:** `sap:SuccessFactors` v1.21 | **Auth:** Basic (`sfapiuser`)
+  </Step>
+  <Step title="End">
+    Message end event (`EndEvent_2`) terminates the flow instance.
+  </Step>
+</Steps>
+
+## Receiver Connection Summary
+
+| # | Participant ID | Protocol | Operation | Endpoint / Resource |
+|---|---|---|---|---|
+| 1 | `Participant_9` | SuccessFactors OData V2 | GET (Query) | `EmpJob` — filter `emplStatus eq '1465'` |
+| 2 | `Participant_11` | HTTP | GET | `https://s4d.ric.hec.ondemand.com/sap/opu/odata/sap/ZHR_CARTAS_SRV/CartaSet` |
+| 3 | `Participant_38` | SuccessFactors OData V2 | UPSERT | `cust_Info_Certificados` |
+
+<Note>
+  Both SuccessFactors calls target `https://api19preview.sapsf.com/odata/v2` and use the credential alias `sfapiuser`. TLS session reuse is enabled on both adapters.
+</Note>

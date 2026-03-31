@@ -1,0 +1,72 @@
+---
+title: "Scheduling"
+description: "Timer configuration for the Compensaciones integration flow — cron expression, time zone, and instructions for modifying the schedule in SAP CPI."
+---
+
+The integration flow is triggered by a **Start Timer Event** (`StartEvent_4`, name: "Start Timer 1") using a cron-based schedule. There is no inbound HTTP trigger; the flow runs entirely on the configured timer.
+
+## Timer Configuration
+
+| Property | Value |
+|---|---|
+| Start Event ID | `StartEvent_4` |
+| Start Event Name | Start Timer 1 |
+| Timer Component Version | 1.4 |
+| Trigger Type | `cron` |
+| Cron Expression | `0 0/5 * ? * *` |
+| Time Zone | UTC — `Etc/GMT` (UTC +0:00, Greenwich Mean Time) |
+| Start Date | _(none — open-ended)_ |
+| End Date | _(none — open-ended)_ |
+| `throwExceptionOnExpiry` | `true` |
+
+## Cron Expression Breakdown
+
+The effective schedule is **every 5 minutes, every hour, every day**, with no start or end date restriction.
+
+| Field | Value | Meaning |
+|---|---|---|
+| Second | `0` | At second 0 |
+| Minute | `0/5` | Every 5 minutes starting at minute 0 (0, 5, 10, … 55) |
+| Hour | `*` | Every hour |
+| Day of Month | `?` | No specific day constraint |
+| Month | `*` | Every month |
+| Day of Week | `*` | Every day of the week |
+| Year | `*` | Every year |
+
+<Info>
+  The flow runs approximately 288 times per day (12 times per hour × 24 hours). Ensure that the SuccessFactors and S/4HANA systems can sustain this call frequency before deploying to production.
+</Info>
+
+## throwExceptionOnExpiry
+
+When `throwExceptionOnExpiry` is set to `true`, SAP CPI will raise an exception if the scheduled trigger expires (i.e., the previous execution has not yet completed when the next trigger fires). This prevents overlapping executions and ensures that a stalled run surfaces as a visible error in the Message Processing Log rather than silently queuing a second instance.
+
+<Warning>
+  If the flow processing time approaches or exceeds 5 minutes (for example, during high employee volumes or slow S/4HANA responses), `throwExceptionOnExpiry` will cause the next scheduled run to fail with an expiry exception. Monitor average run duration in the Operations view and adjust the interval if needed.
+</Warning>
+
+## Modifying the Schedule in SAP CPI
+
+<Steps>
+  <Step title="Open the Integration Flow in the editor">
+    In the SAP Integration Suite tenant, navigate to **Design** → your integration package → click the **Compensaciones** integration flow → click **Edit**.
+  </Step>
+  <Step title="Select the Start Timer event">
+    Click the **Start Timer 1** shape (the clock icon at the beginning of the process lane) to select it.
+  </Step>
+  <Step title="Open the Timer tab in the Properties panel">
+    In the bottom panel, select the **Processing** tab. You will see the scheduler configuration fields:
+    - **Scheduler**: switch between `Simple` and `Advanced (Cron Expression)`
+    - For cron-based schedules, select **Advanced (Cron Expression)** and edit the individual cron fields or enter a raw expression.
+  </Step>
+  <Step title="Update the cron fields">
+    Modify the desired fields. For example, to run every 10 minutes instead of every 5, change **Minute** from `0/5` to `0/10`. The time zone field accepts standard IANA zone IDs (e.g., `America/Mexico_City`, `Europe/Madrid`).
+  </Step>
+  <Step title="Save and deploy">
+    Click **Save**, then click **Deploy**. The new schedule takes effect on the next deployment. Active executions are not interrupted.
+  </Step>
+</Steps>
+
+<Tip>
+  Use [crontab.guru](https://crontab.guru) to validate cron expressions before saving. SAP CPI uses a 6-field Quartz cron format (seconds, minutes, hours, day-of-month, month, day-of-week), so include the seconds field when translating standard 5-field Unix cron expressions.
+</Tip>

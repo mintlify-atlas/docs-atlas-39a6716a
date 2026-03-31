@@ -1,0 +1,68 @@
+---
+title: 'Prerequisites'
+description: 'System access, credentials, and data requirements before deploying the Compensaciones integration flow.'
+---
+
+Before deploying the **Compensaciones** integration flow, confirm that all of the following are in place.
+
+## Platform access
+
+<CardGroup cols={2}>
+  <Card title="SAP BTP / CPI tenant" icon="cloud">
+    You need an active SAP Business Technology Platform tenant with SAP Integration Suite (Cloud Integration) enabled.
+  </Card>
+  <Card title="SAP SuccessFactors tenant" icon="users">
+    OData V2 API access must be enabled on your SuccessFactors instance at `https://api19preview.sapsf.com`.
+  </Card>
+  <Card title="SAP S/4HANA system" icon="database">
+    The custom OData service `ZHR_CARTAS_SRV` must be activated and reachable at `https://s4d.ric.hec.ondemand.com`.
+  </Card>
+  <Card title="CPI Security Material" icon="key">
+    Permissions to create and manage credential aliases in the SAP Integration Suite Security Material store.
+  </Card>
+</CardGroup>
+
+## Required credential aliases
+
+Configure the following aliases in **Monitor > Security Material > User Credentials** before deploying the flow. The integration will fail to authenticate if either alias is missing.
+
+| Alias | System | Authentication type | Used by |
+|---|---|---|---|
+| `sfapiuser` | SAP SuccessFactors | Basic (username / password) | SuccessFactors OData V2 adapter (both `EmpJob` query and `cust_Info_Certificados` upsert) |
+| `gperez` | SAP S/4HANA | Basic (username / password) | HTTP adapter calling `ZHR_CARTAS_SRV/CartaSet` |
+
+<Warning>
+  Do not rename these aliases. The integration flow references them by their exact string values. If you need to use different credential names, update the adapter configuration in the flow before deploying.
+</Warning>
+
+## SAP SuccessFactors requirements
+
+- **Endpoint:** `https://api19preview.sapsf.com/odata/v2`
+- **Protocol:** OData V2 (Atom/XML)
+- **EDMX metadata file:** `edmx/api19preview_sapsf_com_odata_v2.edmx` must be bundled inside the integration package
+
+### Custom object: `cust_Info_Certificados`
+
+The flow writes compensation data to the SuccessFactors custom object `cust_Info_Certificados`. Ensure this object exists and exposes the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `externalCode` | String | Employee user ID (maps to `userId` from `EmpJob`) |
+| `effectiveStartDate` | Date | Date the record takes effect (set to current date at runtime) |
+| `cust_totalComisiones` | Long | Total commissions value read from S/4HANA |
+| `cust_promedioComisiones` | Long | Average commissions value read from S/4HANA |
+
+### Employee status filter
+
+Only employees whose `emplStatus` field equals **`1465`** are queried from the `EmpJob` entity. Employees with any other status are excluded from processing.
+
+<Note>
+  The filter `$filter=emplStatus eq '1465'` is applied directly in the SuccessFactors adapter query options. If your tenant uses a different status code for active employees, update this value in the adapter configuration.
+</Note>
+
+## SAP S/4HANA requirements
+
+- **Endpoint:** `https://s4d.ric.hec.ondemand.com/sap/opu/odata/sap/ZHR_CARTAS_SRV/CartaSet`
+- **Service:** `ZHR_CARTAS_SRV` — must be activated in transaction `/IWFND/MAINT_SERVICE`
+- **Method:** HTTP GET with Basic authentication
+- **Entity set:** `CartaSet` — must return `Prom` and `Total` fields used to populate commissions data

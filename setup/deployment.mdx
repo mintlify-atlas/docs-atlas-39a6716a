@@ -1,0 +1,83 @@
+---
+title: 'Deployment'
+description: 'Step-by-step guide to importing and deploying the Compensaciones integration flow to your SAP CPI tenant.'
+---
+
+This guide walks you through importing the **Compensaciones** integration package into SAP Integration Suite and deploying it to your CPI tenant.
+
+## Integration package details
+
+| Property | Value |
+|---|---|
+| Bundle name | `Compensaciones` |
+| Symbolic name | `Compensaciones` |
+| Version | `1.0.0` |
+| Type | `IntegrationFlow` |
+| Runtime profile | `iflmap` |
+
+<Warning>
+  Configure both credential aliases (`sfapiuser` and `gperez`) in Security Material **before** deploying the flow. Deploying without them will cause immediate runtime failures on the first scheduled execution.
+</Warning>
+
+## Deployment steps
+
+<Steps>
+  <Step title="Obtain the integration package">
+    Export or download the integration package `.zip` file from your source control or from an existing CPI tenant.
+
+    The bundle contains the `Compensaciones.iflw` flow definition, the EDMX metadata file at `edmx/api19preview_sapsf_com_odata_v2.edmx`, and the `MANIFEST.MF` descriptor.
+  </Step>
+
+  <Step title="Import the package into Integration Suite">
+    1. Log in to your SAP Integration Suite tenant.
+    2. Navigate to **Design > Integrations and APIs**.
+    3. Select **Import** and upload the `.zip` file.
+    4. Confirm the package name shows as **Compensaciones** after the import completes.
+  </Step>
+
+  <Step title="Configure credential aliases in Security Material">
+    Before deploying, ensure both aliases exist under **Monitor > Security Material > User Credentials**:
+
+    | Alias | Target system |
+    |---|---|
+    | `sfapiuser` | SAP SuccessFactors (`https://api19preview.sapsf.com`) |
+    | `gperez` | SAP S/4HANA (`https://s4d.ric.hec.ondemand.com`) |
+
+    <Note>
+      If the aliases already exist from a previous deployment, verify that the credentials are still valid before proceeding.
+    </Note>
+  </Step>
+
+  <Step title="Deploy the integration flow">
+    1. Open the imported **Compensaciones** package in the Design view.
+    2. Select the **Compensaciones** integration flow artifact.
+    3. Click **Deploy**.
+    4. Confirm the deployment in the dialog that appears.
+
+    The runtime will start the flow and activate the scheduler. The first execution will occur at the next scheduled interval (every 5 minutes, on the cron `0/5 * * * *`).
+  </Step>
+
+  <Step title="Verify the deployment in Monitor">
+    1. Navigate to **Monitor > Manage Integration Content**.
+    2. Locate the **Compensaciones** artifact.
+    3. Confirm the status shows as **Started**.
+
+    <Check>
+      A **Started** status means the integration flow is running and the timer trigger is active.
+    </Check>
+
+    If the status shows **Error**, open the artifact details and check the error message. Common causes are missing credential aliases or unreachable endpoints.
+  </Step>
+</Steps>
+
+## Verifying a successful execution
+
+After the first scheduled run, check the message processing log:
+
+1. Go to **Monitor > Monitor Message Processing**.
+2. Filter by artifact name **Compensaciones**.
+3. Confirm at least one message shows status **Completed**.
+
+<Note>
+  Because the log level is set to **All events**, detailed trace information is available for every message processed. This is useful for initial validation but generates a higher volume of log entries. Consider adjusting the log level after confirming correct operation.
+</Note>

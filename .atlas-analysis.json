@@ -1,0 +1,67 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Integración Infotipo 015 CPI",
+  "projectDescription": "A SAP Cloud Platform Integration (CPI) flow that synchronizes employee compensation data from SAP S/4HANA to SAP SuccessFactors by reading job records, fetching commission totals, and upserting custom certificate info objects on a scheduled basis.",
+  "theme": "aspen",
+  "primaryColor": "#0070F2",
+  "lightColor": "#E8F3FF",
+  "darkColor": "#003B73",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Setup & Deployment",
+            "pages": [
+              "setup/prerequisites",
+              "setup/deployment",
+              "setup/configuration"
+            ]
+          },
+          {
+            "group": "Integration Flow",
+            "pages": [
+              "flow/overview",
+              "flow/data-mapping",
+              "flow/groovy-script",
+              "flow/scheduling"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/error-handling",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Timer-triggered scheduled execution (cron-based, every 5 minutes)",
+    "Reads active employee job records from SAP SuccessFactors via OData V2 (EmpJob entity)",
+    "Fetches commission compensation data from SAP S/4HANA OData service (ZHR_CARTAS_SRV)",
+    "XPath-based message splitting to process each employee record individually",
+    "Groovy script for XML namespace cleanup and OData response normalization",
+    "Upserts custom SuccessFactors object (cust_Info_Certificados) with calculated commission data",
+    "Basic authentication with credential aliases for both SAP systems",
+    "Content Modifier steps for property extraction and message body construction"
+  ],
+  "publicApiSurface": [
+    "SuccessFactors OData V2 endpoint: GET /odata/v2/EmpJob ($filter=emplStatus eq '1465')",
+    "S/4HANA OData endpoint: GET /sap/opu/odata/sap/ZHR_CARTAS_SRV/CartaSet",
+    "SuccessFactors OData V2 endpoint: UPSERT /odata/v2/cust_Info_Certificados",
+    "Groovy function: processData(Message message) — strips OData XML namespaces",
+    "Integration flow bundle: Compensaciones (SAP-BundleType: IntegrationFlow)"
+  ]
+}

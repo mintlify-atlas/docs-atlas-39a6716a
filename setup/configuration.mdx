@@ -1,0 +1,114 @@
+---
+title: 'Configuration'
+description: 'All configurable parameters for the Compensaciones integration flow, including endpoints, credentials, scheduler, and runtime settings.'
+---
+
+This page documents every configurable aspect of the **Compensaciones** integration flow. All settings are located inside the flow definition in SAP Integration Suite. To change any value, open the flow in Design view, select the relevant adapter or step, and edit the property described below.
+
+## Endpoints
+
+### SAP SuccessFactors
+
+| Property | Value |
+|---|---|
+| Base address | `https://api19preview.sapsf.com` |
+| OData path suffix | `/odata/v2` |
+| Full base URL | `https://api19preview.sapsf.com/odata/v2` |
+| EDMX metadata file | `edmx/api19preview_sapsf_com_odata_v2.edmx` |
+| Protocol | OData V2 (Atom/XML) |
+| Authentication | Basic — credential alias `sfapiuser` |
+| Receive timeout | 1 minute |
+| Adapter version | `1.21` |
+
+To point the flow at a different SuccessFactors data center, update the **Address** field in both SuccessFactors adapter steps (`Request Reply 1` / `EmpJob` query and `Request Reply 3` / `cust_Info_Certificados` upsert). Also replace the EDMX file with one generated from the new host.
+
+### SAP S/4HANA
+
+| Property | Value |
+|---|---|
+| Full URL | `https://s4d.ric.hec.ondemand.com/sap/opu/odata/sap/ZHR_CARTAS_SRV/CartaSet` |
+| HTTP method | GET |
+| Authentication | Basic — credential alias `gperez` |
+| Request timeout | 60000 ms (60 seconds) |
+| Adapter version | `1.17` |
+
+To change the S/4HANA host or service path, update the **Address** field in the HTTP adapter step (`Request Reply 2`).
+
+<Warning>
+  The S/4HANA URL is split into a base path (`httpAddressWithoutQuery`) and a query string (`httpAddressQuery`) in the adapter. When changing the endpoint, update both fields to avoid malformed requests.
+</Warning>
+
+## Employee filter
+
+The `EmpJob` query in the SuccessFactors adapter uses the following OData filter to restrict results to active employees only:
+
+```
+$filter=emplStatus eq '1465'
+```
+
+To change the employee status code:
+
+1. Open the **Compensaciones** flow in Design view.
+2. Select the **Request Reply 1** step and open its SuccessFactors adapter (connected to `Receiver1`).
+3. Locate the **Query Options** field.
+4. Replace `1465` with your target status value.
+
+<Note>
+  The status code `1465` is a tenant-specific value. Confirm the correct active-employee status code with your SuccessFactors administrator before changing this filter.
+</Note>
+
+## Scheduler
+
+The flow is triggered by a cron-based timer start event.
+
+| Property | Value |
+|---|---|
+| Trigger type | Cron |
+| Cron expression | `0 0/5 * ? * *` |
+| Effective schedule | Every 5 minutes, every hour, every day |
+| Time zone | `Etc/GMT` (UTC 0:00) |
+
+To change the execution frequency, update the **Schedule** configuration on the **Start Timer 1** event in the flow.
+
+## Splitter settings
+
+After retrieving the `EmpJob` list from SuccessFactors, the **General Splitter 1** step processes each employee record individually.
+
+| Property | Value |
+|---|---|
+| Split expression | `/EmpJob/EmpJob` (XPath) |
+| Threads | 10 |
+| Parallel processing | `false` (sequential) |
+| Stop on execution error | `true` |
+| Timeout | 300 seconds |
+| Grouping | 1 record per split message |
+
+<Note>
+  Sequential processing (`ParallelProcessing = false`) means each employee is processed one at a time using up to 10 threads. Increasing the thread count can improve throughput but may increase load on both SuccessFactors and S/4HANA.
+</Note>
+
+## Logging
+
+| Property | Value |
+|---|---|
+| Log level | `All events` |
+| MPL attachments | Enabled on the HTTP adapter step |
+
+The **All events** log level captures every processing step in the message processing log (MPL). This provides full traceability during initial deployment and troubleshooting, but results in a higher volume of log data. Reduce the log level to **Error** or **Info** once the integration is operating correctly in production.
+
+To change the log level:
+
+1. Open the **Compensaciones** flow in Design view.
+2. Click on the canvas background (outside any flow step) to open the collaboration properties.
+3. Update the **Log** property.
+
+## Runtime processing properties
+
+The following properties are set at runtime by the Content Modifier steps and are not directly configurable in the adapter settings.
+
+| Property | Source | Description |
+|---|---|---|
+| `userId` | XPath `//userId` from `EmpJob` response | Employee user ID, used as `externalCode` in the SuccessFactors upsert |
+| `effectiveStartDate` | `${date:now:yyyy-MM-dd}` | Set to the current date at execution time |
+| `totalComisiones` | XPath `//*[local-name()='Total']/text()` from S/4HANA response | Total commissions value |
+| `promedioComisiones` | XPath `//*[local-name()='Prom']/text()` from S/4HANA response | Average commissions value |

@@ -1,0 +1,140 @@
+---
+title: "Architecture"
+description: "Step-by-step breakdown of the Compensaciones integration flow defined in Compensaciones.iflw, including adapters, data transformations, and the Groovy namespace normalizer."
+---
+
+The integration process is a linear, timer-driven BPMN flow (`Process_1`) defined in `Compensaciones.iflw`. It runs on a cron schedule and processes each active employee sequentially through three external calls — two to SAP SuccessFactors and one to SAP S/4HANA.
+
+## Flow steps
+
+<Steps>
+  <Step title="Start Timer">
+    A cron-based timer event (`StartEvent_4 / StartTimerEvent`) triggers the flow. The cron expression `0 0/5 * ? * *` fires every 5 minutes across all hours, every day, in the `Etc/GMT` timezone.
+  </Step>
+
+  <Step title="Request Reply 1 — Query EmpJob (SuccessFactors)">
+    Calls SAP SuccessFactors via the **SuccessFactors OData V2** adapter (`ServiceTask_6`, `Receiver1`).
+
+    - **Operation:** `Query (GET)`
+    - **Resource:** `EmpJob`
+    - **Filter:** `$filter=emplStatus eq '1465'`
+    - **Endpoint:** `https://api19preview.sapsf.com/odata/v2`
+    - **Auth:** Basic (`sfapiuser`)
+    - **Content-Type:** `application/atom+xml`
+
+    Returns all active employee job records matching employment status `1465`.
+  </Step>
+
+  <Step title="General Splitter 1 — Split per employee">
+    An XPath-based general splitter (`CallActivity_31`) iterates over each employee record returned by Request Reply 1.
+
+    - **XPath expression:** `/EmpJob/EmpJob`
+    - **Streaming:** enabled
+    - **Parallel processing:** disabled (sequential)
+    - **Threads:** 10
+    - **Timeout:** 300 s
+
+    Each split produces a single `EmpJob` element that flows independently through the remaining steps.
+  </Step>
+
+  <Step title="Content Modifier 1 — Extract userId">
+    A Content Modifier (`CallActivity_27`) reads the `userId` field from the current split message and stores it as an exchange property.
+
+    | Property | Type | XPath |
+    |---|---|---|
+    | `userId` | `java.lang.String` | `//userId` |
+  </Step>
+
+  <Step title="Request Reply 2 — Query CartaSet (S/4HANA)">
+    Calls the S/4HANA custom OData service via the **HTTP** adapter (`ServiceTask_29`, `Receiver2`).
+
+    - **Operation:** `GET`
+    - **URL:** `https://s4d.ric.hec.ondemand.com/sap/opu/odata/sap/ZHR_CARTAS_SRV/CartaSet`
+    - **Query string:** `$filter=User eq '{userId}'`
+    - **Auth:** Basic (`gperez`)
+    - **Timeout:** 60 000 ms
+    - **MPL attachments:** enabled
+
+    Returns commission data for the current employee, including `Prom` (average commissions) and `Total` (total commissions).
+
+    <Note>
+      The HTTP response from S/4HANA contains OData XML with `d:` and `m:` namespace prefixes (e.g., `<d:Prom>`, `<m:properties>`). A Groovy script (`groovyscript_1.groovy`) runs between this step and Content Modifier 2 to normalize the XML before XPath expressions can be applied reliably.
+
+      The script strips all namespace declarations and prefixes using the following replacements:
+
+      ```groovy groovyscript_1.groovy
+      body = body.replaceAll('xmlns[^"]*"[^"]*"', '')
+      body = body.replaceAll('<d:', '<')
+      body = body.replaceAll('</d:', '</')
+      body = body.replaceAll('<m:', '<')
+      body = body.replaceAll('</m:', '</')
+      ```
+
+      After normalization, elements like `<d:Prom>` become `<Prom>`, making them addressable with simple XPath expressions such as `//*[local-name()='Prom']/text()`.
+    </Note>
+  </Step>
+
+  <Step title="Content Modifier 2 — Build cust_Info_Certificados payload">
+    A second Content Modifier (`CallActivity_34`) reads the normalized S/4HANA response, sets exchange properties, and builds the XML body for the SuccessFactors upsert.
+
+    **Properties set:**
+
+    | Property | Type | Source |
+    |---|---|---|
+    | `effectiveStartDate` | expression | `${date:now:yyyy-MM-dd}` (today's date at runtime) |
+    | `promedioComisiones` | `java.lang.Long` | XPath `//*[local-name()='Prom']/text()` |
+    | `totalComisiones` | `java.lang.Long` | XPath `//*[local-name()='Total']/text()` |
+    | `emplStatus` | `java.lang.String` | `${property.emplStatus}` |
+    | `externalCode` | `java.lang.String` | `${property.userId}` |
+
+    **XML body constructed:**
+
+    ```xml
+    <cust_Info_Certificados>
+      <cust_Info_Certificados>
+        <externalCode>${property.externalCode}</externalCode>
+        <effectiveStartDate>${property.effectiveStartDate}</effectiveStartDate>
+        <cust_totalComisiones>${property.totalComisiones}</cust_totalComisiones>
+        <cust_promedioComisiones>${property.promedioComisiones}</cust_promedioComisiones>
+      </cust_Info_Certificados>
+    </cust_Info_Certificados>
+    ```
+  </Step>
+
+  <Step title="Request Reply 3 — Upsert cust_Info_Certificados (SuccessFactors)">
+    Calls SAP SuccessFactors via the **SuccessFactors OData V2** adapter (`ServiceTask_36`, `Receiver3`).
+
+    - **Operation:** `Upsert (UPSERT)`
+    - **Resource:** `cust_Info_Certificados`
+    - **Fields written:** `effectiveStartDate`, `externalCode`, `cust_promedioComisiones`, `cust_totalComisiones`
+    - **Endpoint:** `https://api19preview.sapsf.com/odata/v2`
+    - **Auth:** Basic (`sfapiuser`)
+    - **Content-Type:** `application/atom+xml`
+    - **Paging mode:** `snapshot`
+
+    Creates or updates the compensation certificate record for the employee in SuccessFactors.
+  </Step>
+
+  <Step title="End event">
+    The flow terminates with a message end event (`EndEvent_2`). All events are logged (`log: All events` at the collaboration level).
+  </Step>
+</Steps>
+
+## Sequence diagram
+
+```
+Timer (every 5 min)
+  └─▶ Request Reply 1 ──▶ SuccessFactors GET EmpJob ($filter=emplStatus eq '1465')
+        └─▶ General Splitter 1 (XPath: /EmpJob/EmpJob)
+              └─▶ [per employee]
+                    └─▶ Content Modifier 1 (extract userId)
+                          └─▶ Request Reply 2 ──▶ S/4HANA GET ZHR_CARTAS_SRV/CartaSet
+                                └─▶ Groovy script (strip xmlns / d: / m: prefixes)
+                                      └─▶ Content Modifier 2 (build cust_Info_Certificados XML)
+                                            └─▶ Request Reply 3 ──▶ SuccessFactors UPSERT cust_Info_Certificados
+                                                  └─▶ End
+```
+
+<Tip>
+  Because parallel processing is disabled on the splitter, employees are processed one at a time. If the number of active employees grows significantly, consider enabling parallel processing and adjusting the thread count (`SplitterThreads`, currently `10`) to reduce total run time within the 5-minute window.
+</Tip>

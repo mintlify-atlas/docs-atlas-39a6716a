@@ -1,0 +1,115 @@
+---
+title: Error Handling
+description: How the Compensaciones integration flow handles errors, retries, and failure conditions — and where to find error details when something goes wrong.
+---
+
+## Error Propagation
+
+`returnExceptionToSender` is set to **false**. Because Compensaciones is triggered by a timer (not a synchronous caller), there is no sender to propagate errors back to. Errors are recorded in the MPL and the message is marked **Failed**; no error response is returned to any upstream system.
+
+<Note>
+  If you need to be alerted on failures, configure an alert in **Monitor > Manage Alerts** targeting the `Compensaciones` artifact with a **Failed** status condition.
+</Note>
+
+---
+
+## HTTP Adapter Behavior (S/4HANA)
+
+| Setting | Value | Effect |
+|---|---|---|
+| `throwExceptionOnFailure` | `true` | Any non-2xx HTTP response from S/4HANA raises an exception and fails the message |
+| `retryOnConnectionFailure` | `false` | Connection-level failures (timeout, refused) are **not** retried automatically |
+| Request timeout | 60,000 ms | S/4HANA calls that take longer than 60 seconds will time out and fail |
+
+<Warning>
+  Because `retryOnConnectionFailure` is disabled, a single network blip to S/4HANA will fail the message immediately. Monitor for transient **Failed** entries in the MPL that resolve on the next timer tick — these are typically connectivity issues rather than data problems.
+</Warning>
+
+---
+
+## SuccessFactors Adapter Behavior
+
+| Setting | Value | Effect |
+|---|---|---|
+| `retryOnFailure` | `1` | Both SuccessFactors adapters (inbound EmpJob query and outbound UPSERT) will automatically retry once on failure |
+| Receive timeout | 1 minute | If SuccessFactors does not respond within 60 seconds, the call fails |
+
+<Info>
+  The single automatic retry on SuccessFactors calls handles transient API errors (rate limits, brief outages) without operator intervention. If both the initial attempt and the retry fail, the message is marked **Failed** and must be investigated manually.
+</Info>
+
+---
+
+## Splitter Behavior on Failure
+
+The Splitter is configured with `StopOnExecution: true`. This means:
+
+- If a split message (one employee record) fails during processing, the Splitter **stops** and does not process the remaining records in the batch.
+- The parent MPL entry will show **Failed**.
+- Child MPL entries up to the point of failure will show their individual statuses.
+
+<Warning>
+  When the Splitter stops early, employees whose records came after the failed one are **not processed** in that run. They will be picked up on the next timer execution, provided the underlying issue has been resolved. Check child MPL entries to identify exactly which employee record caused the stop.
+</Warning>
+
+---
+
+## What Happens in Common Failure Scenarios
+
+<AccordionGroup>
+  <Accordion title="SuccessFactors is unreachable">
+    The SuccessFactors adapter will attempt one retry (after the initial failure). If both attempts fail:
+
+    - The message is marked **Failed** in the MPL.
+    - No S/4HANA call is made (the EmpJob query runs first in the flow).
+    - Check **Monitor > Message Processing Logs > Failed** for the error detail — look for a connection timeout or authentication error.
+    - Verify the SuccessFactors endpoint is reachable and that the `sfapiuser` credential is valid in **Security Material**.
+  </Accordion>
+
+  <Accordion title="S/4HANA returns an empty CartaSet">
+    If the OData query to S/4HANA returns no records (`CartaSet` is empty):
+
+    - The XPath expressions that extract `Prom` and `Total` will return null or empty strings.
+    - This may cause the Content Modifier or UPSERT to produce malformed payloads.
+    - The message may **Fail** with a mapping or UPSERT error downstream.
+    - Check the **MPL attachment** on the S/4HANA call step to inspect the raw response and confirm the empty set.
+    - Verify that the query parameters (e.g., employee ID, date range) passed to S/4HANA are correct by checking the Groovy script output in the MPL.
+  </Accordion>
+
+  <Accordion title="S/4HANA call times out (60 seconds)">
+    If S/4HANA does not respond within 60,000 ms:
+
+    - `throwExceptionOnFailure: true` raises an exception immediately.
+    - `retryOnConnectionFailure: false` means no retry occurs.
+    - The message is marked **Failed**.
+    - Check S/4HANA system availability and current load. If sustained slowness is expected, a timeout increase can be applied in the HTTP adapter configuration.
+  </Accordion>
+
+  <Accordion title="Authentication failure">
+    - **SuccessFactors**: The `sfapiuser` Basic auth alias is invalid or expired. Update the credential in **Monitor > Manage Security > Security Material**.
+    - **S/4HANA**: The `gperez` Basic auth credential is invalid or expired. Update similarly under Security Material.
+    - Both cases will produce a 401 or 403 HTTP status, which `throwExceptionOnFailure: true` converts into an exception.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Finding Failed Messages
+
+<Steps>
+  <Step title="Open Message Processing Logs">
+    Go to **Monitor > Monitor Message Processing**.
+  </Step>
+  <Step title="Filter by status and artifact">
+    Set **Status** to `Failed` and **Artifact Name** to `Compensaciones`.
+  </Step>
+  <Step title="Open the failed entry">
+    Click the entry to view the error message, processing steps, and attached payloads.
+  </Step>
+  <Step title="Check the error detail">
+    The **Logs** tab within the MPL entry shows the step-by-step trace. The **Error Details** section shows the exception message and stack trace.
+  </Step>
+  <Step title="Inspect attachments if needed">
+    If the error is data-related (unexpected payload, XPath null), check the **Attachments** tab for the raw S/4HANA response.
+  </Step>
+</Steps>

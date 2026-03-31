@@ -1,97 +1,55 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Integración Infotipo 015 CPI"
+description: "SAP CPI integration flow that synchronizes employee compensation data from SAP S/4HANA to SAP SuccessFactors automatically."
 ---
 
-## Setting up
+This integration flow runs on SAP Cloud Platform Integration (CPI) and synchronizes commission compensation data for active employees. It reads job records from SAP SuccessFactors, fetches commission totals from an SAP S/4HANA OData service, and writes the results back to a custom SuccessFactors object — all on an automated schedule.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Understand what this integration does, which systems it connects, and how it fits your HR data landscape.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Explore the integration flow diagram, step-by-step message processing, and system connectivity.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Setup & Deployment" icon="rocket" href="/setup/prerequisites">
+    Get the integration deployed to your SAP CPI tenant, including all prerequisites and credential configuration.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Operations" icon="gauge" href="/operations/monitoring">
+    Monitor execution status, handle errors, and troubleshoot common issues in the CPI Operations Cockpit.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Timer fires on schedule">
+    A cron-based timer starts the flow every 5 minutes, querying SuccessFactors for all employees with active job status (`emplStatus = 1465`).
+  </Step>
+  <Step title="Employee records are split">
+    Each `EmpJob` record from SuccessFactors is split individually using an XPath General Splitter, so each employee is processed independently.
+  </Step>
+  <Step title="Commission data is fetched">
+    For each employee, the flow calls the SAP S/4HANA OData service (`ZHR_CARTAS_SRV/CartaSet`) to retrieve total and average commission values.
+  </Step>
+  <Step title="Data is written back to SuccessFactors">
+    The flow maps the commission data into the custom `cust_Info_Certificados` object and upserts it into SuccessFactors via OData V2.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Key capabilities
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Scheduled execution" icon="clock">
+    Runs automatically every 5 minutes via a cron timer — no manual triggering required.
+  </Card>
+  <Card title="Per-employee processing" icon="users">
+    Splits the employee list and processes each record individually to ensure accurate data mapping.
+  </Card>
+  <Card title="Bidirectional SAP connectivity" icon="arrows-left-right">
+    Reads from and writes to both SAP SuccessFactors and SAP S/4HANA using OData V2.
+  </Card>
+  <Card title="XML namespace normalization" icon="code">
+    A Groovy script strips OData XML namespaces to simplify downstream XPath processing.
+  </Card>
+</CardGroup>

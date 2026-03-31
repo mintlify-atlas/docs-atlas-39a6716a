@@ -1,0 +1,139 @@
+---
+title: Troubleshooting
+description: Common issues with the Compensaciones integration flow, their likely causes, and step-by-step resolutions.
+---
+
+## Common Issues
+
+| Issue | Likely Cause | Resolution |
+|---|---|---|
+| Flow shows "Started" but no messages in MPL | Timer hasn't fired yet | Wait up to 5 minutes for the next cron tick; verify the timer schedule in the flow configuration |
+| Authentication error on SuccessFactors | `sfapiuser` credential expired or wrong | Update the credential in Security Material (see below) |
+| Authentication error on S/4HANA | `gperez` credential expired or wrong | Update the credential in Security Material (see below) |
+| XPath returns null for `Prom` / `Total` | S/4HANA response has unexpected structure or namespace not cleaned | Check MPL attachment for raw S/4HANA response; verify Groovy script ran and cleaned namespaces |
+| UPSERT to `cust_Info_Certificados` fails with 400 | `externalCode` or date format mismatch | Check Content Modifier 2 output in MPL; verify `effectiveStartDate` is formatted as `yyyy-MM-dd` |
+| Flow stuck in "Processing" | S/4HANA call timed out after 60 seconds | Check S/4HANA system availability; consider increasing timeout in HTTP adapter if sustained slowness |
+| No employees processed | EmpJob query returns empty (no active employees with status `1465`) | Verify active employee data in SuccessFactors; run the EmpJob query manually to confirm results |
+
+---
+
+## Updating Credentials in Security Material
+
+<Steps>
+  <Step title="Navigate to Security Material">
+    Go to **Monitor > Manage Security > Security Material**.
+  </Step>
+  <Step title="Locate the credential">
+    Search for `sfapiuser` (SuccessFactors) or `gperez` (S/4HANA).
+  </Step>
+  <Step title="Edit and update">
+    Click the credential entry, select **Edit**, update the username and/or password, then click **Deploy**.
+  </Step>
+  <Step title="Verify">
+    Trigger a manual run of the flow (or wait for the next timer tick) and confirm the authentication error is gone in the MPL.
+  </Step>
+</Steps>
+
+<Warning>
+  Deploying a new credential does not require redeploying the integration flow. The adapter picks up the updated value on the next execution. However, if the credential name itself was changed (not just the password), the flow must be reconfigured and redeployed.
+</Warning>
+
+---
+
+## Reading MPL Attachments
+
+MPL attachments capture the raw payloads at the S/4HANA HTTP adapter call. They are the primary debugging tool for data-related failures.
+
+<Steps>
+  <Step title="Open the MPL entry">
+    In **Monitor > Monitor Message Processing**, click the failed (or completed) log entry for `Compensaciones`.
+  </Step>
+  <Step title="Go to Attachments">
+    Select the **Attachments** tab. You will see entries for the request sent to S/4HANA and the response received.
+  </Step>
+  <Step title="Download and inspect">
+    Click an attachment to download it. Open it in a text editor or XML viewer.
+    - If the response is empty or has no `CartaSet` entries, S/4HANA returned no data for the query parameters used.
+    - If the response contains data but XPath still returns null, the XML namespace may not have been cleaned correctly by the Groovy script.
+  </Step>
+</Steps>
+
+<Note>
+  Attachments are only available because `enableMPLAttachments: true` is set on the S/4HANA HTTP adapter. If attachments are missing, verify this setting is still active in the adapter configuration.
+</Note>
+
+---
+
+## Finding Groovy Script Output
+
+The Groovy script that cleans XML namespaces and transforms the S/4HANA response runs as a dedicated step in the flow. Its output (the transformed message) is visible in the MPL step trace.
+
+<Steps>
+  <Step title="Open the MPL entry">
+    Click the relevant log entry in **Monitor > Monitor Message Processing**.
+  </Step>
+  <Step title="Go to the Logs tab">
+    Select the **Logs** tab to see the step-by-step processing trace.
+  </Step>
+  <Step title="Locate the Groovy Script step">
+    Find the step named after the Groovy script (e.g., `Script` or the configured step name). Click it to expand the step detail.
+  </Step>
+  <Step title="Inspect message at that step">
+    If log level tracing is capturing message content at that step, the payload after the Groovy transformation is shown here. Compare it to the raw S/4HANA response in the attachment to verify namespace removal worked correctly.
+  </Step>
+</Steps>
+
+<Tip>
+  If the Groovy step detail does not show the full payload, you can temporarily add a `Log` statement inside the Groovy script (`def message = ...; log.info(message.getBody(String))`) and redeploy to capture it explicitly. Remove the log statement after debugging to avoid performance overhead.
+</Tip>
+
+---
+
+## XPath Returns Null for `Prom` or `Total`
+
+This is one of the most common data-related issues. The usual causes:
+
+<AccordionGroup>
+  <Accordion title="Namespace not removed by Groovy script">
+    S/4HANA OData responses include XML namespace declarations (e.g., `xmlns:d="..."`, `xmlns:m="..."`). The XPath expressions in the Content Modifier expect a clean, namespace-free XML document. If the Groovy script did not run or did not strip namespaces correctly:
+
+    - Download the MPL attachment and check whether namespace prefixes are present in the XML.
+    - If they are, check the Groovy script for errors in the MPL step trace.
+    - A namespace-aware XPath like `/*[local-name()='CartaSet']` can work around the issue temporarily, but fixing the Groovy script is the correct resolution.
+  </Accordion>
+
+  <Accordion title="S/4HANA returned empty CartaSet">
+    If `CartaSet` is empty (no records), the XPath has nothing to extract and returns null.
+
+    - Verify the employee ID and date parameters passed to S/4HANA are correct by checking the Content Modifier step output before the S/4HANA call.
+    - Confirm the data exists in S/4HANA by running the equivalent OData query directly in a browser or API tool.
+  </Accordion>
+
+  <Accordion title="Field name or path changed in S/4HANA response">
+    If the S/4HANA OData service was updated and the `Prom` or `Total` field names changed:
+
+    - Download the MPL attachment and search for the actual field names in the response.
+    - Update the XPath expressions in the Content Modifier to match the new field names.
+    - Redeploy the integration flow.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## UPSERT Fails with HTTP 400
+
+A 400 error on the `cust_Info_Certificados` UPSERT typically indicates a payload validation error in SuccessFactors.
+
+<Steps>
+  <Step title="Check the error detail in MPL">
+    Open the failed MPL entry and read the error message in the **Error Details** section — SuccessFactors usually returns a descriptive message about which field failed validation.
+  </Step>
+  <Step title="Inspect Content Modifier 2 output">
+    In the **Logs** tab, find the **Content Modifier 2** step and inspect the message it produced. Verify:
+    - `externalCode` is correctly populated and matches an existing employee record.
+    - `effectiveStartDate` is in `yyyy-MM-dd` format (e.g., `2026-03-31`, not `31/03/2026` or `2026-3-31`).
+  </Step>
+  <Step title="Test the payload manually">
+    Copy the UPSERT payload from the MPL and send it directly to the SuccessFactors API (e.g., via Postman) to confirm the exact field causing the rejection.
+  </Step>
+</Steps>

@@ -1,0 +1,164 @@
+---
+title: "Groovy Script — Namespace Cleanup"
+description: "Documentation for groovyscript_1.groovy, which strips OData Atom XML namespace prefixes to enable clean XPath evaluation downstream."
+---
+
+## Purpose
+
+SAP SuccessFactors and S/4HANA OData services return **Atom XML** responses that carry multiple namespace declarations and namespace-prefixed element names. For example, a raw CartaSet response fragment looks like:
+
+```xml
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+      xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+  <entry>
+    <content type="application/xml">
+      <m:properties>
+        <d:Prom m:type="Edm.Decimal">5000</d:Prom>
+        <d:Total m:type="Edm.Decimal">15000</d:Total>
+      </m:properties>
+    </content>
+  </entry>
+</feed>
+```
+
+When the downstream **Content Modifier** evaluates XPath expressions such as `//*[local-name()='Prom']/text()`, residual `<d:` and `<m:` prefixes would cause namespace-resolution failures unless a proper namespace mapping is registered. Rather than configuring namespace mappings, this script removes all namespace artifacts directly from the raw string, producing clean XML that any XPath engine can traverse without additional configuration.
+
+---
+
+## Source Code
+
+```groovy
+import com.sap.gateway.ip.core.customdev.util.Message
+
+def Message processData(Message message) {
+    String body = message.getBody(String.class)
+    body = body.replaceAll('xmlns[^"]*"[^"]*"', '')
+    body = body.replaceAll('<d:', '<')
+    body = body.replaceAll('</d:', '</')
+    body = body.replaceAll('<m:', '<')
+    body = body.replaceAll('</m:', '</')
+    message.setBody(body)
+    return message
+}
+```
+
+---
+
+## Step-by-Step Explanation
+
+<Steps>
+  <Step title="Read the message body">
+    ```groovy
+    String body = message.getBody(String.class)
+    ```
+    Retrieves the current message payload as a plain `String`. All subsequent operations are string-level transformations — no XML parser is involved, which avoids namespace resolution errors during parsing.
+  </Step>
+
+  <Step title="Strip xmlns namespace declarations">
+    ```groovy
+    body = body.replaceAll('xmlns[^"]*"[^"]*"', '')
+    ```
+    Removes every `xmlns` attribute from the document. The regex matches the literal text `xmlns`, followed by any characters that are not a double-quote (capturing the attribute name and `=` sign), then a double-quoted value.
+
+    **Before:** `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:d="..." xmlns:m="...">`
+
+    **After:** `<feed   >`
+
+    This eliminates all default and prefixed namespace declarations so that downstream processors do not attempt namespace-aware resolution.
+  </Step>
+
+  <Step title="Remove opening <d: OData data prefix">
+    ```groovy
+    body = body.replaceAll('<d:', '<')
+    ```
+    Replaces every opening tag that carries the OData data-services namespace prefix `d:` with a plain `<`. The `d:` prefix is defined by `xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"` and is used on all data property elements such as `<d:Prom>` and `<d:Total>`.
+
+    **Before:** `<d:Prom m:type="Edm.Decimal">5000</d:Prom>`
+
+    **After (this step):** `<Prom m:type="Edm.Decimal">5000</d:Prom>`
+  </Step>
+
+  <Step title="Remove closing </d: OData data prefix">
+    ```groovy
+    body = body.replaceAll('</d:', '</')
+    ```
+    Removes the `d:` prefix from closing tags so they match the unprefixed opening tags produced in the previous step.
+
+    **After:** `<Prom m:type="Edm.Decimal">5000</Prom>`
+  </Step>
+
+  <Step title="Remove opening <m: OData metadata prefix">
+    ```groovy
+    body = body.replaceAll('<m:', '<')
+    ```
+    Strips the OData metadata-services namespace prefix `m:` from opening tags. This prefix (defined by `xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"`) is used on structural wrapper elements such as `<m:properties>` and on type annotation attributes like `m:type`.
+
+    **Before:** `<m:properties>`
+
+    **After:** `<properties>`
+  </Step>
+
+  <Step title="Remove closing </m: OData metadata prefix">
+    ```groovy
+    body = body.replaceAll('</m:', '</')
+    ```
+    Strips the `m:` prefix from all closing metadata tags.
+
+    **Before:** `</m:properties>`
+
+    **After:** `</properties>`
+  </Step>
+
+  <Step title="Write the cleaned body back">
+    ```groovy
+    message.setBody(body)
+    return message
+    ```
+    Replaces the message body with the cleaned XML string and returns the message to continue through the integration flow. The next step (Content Modifier 2) can now safely evaluate XPath expressions without namespace complications.
+  </Step>
+</Steps>
+
+---
+
+## Before and After Example
+
+**Raw OData Atom XML (input):**
+
+```xml
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+      xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+  <entry>
+    <content type="application/xml">
+      <m:properties>
+        <d:Prom m:type="Edm.Decimal">5000</d:Prom>
+        <d:Total m:type="Edm.Decimal">15000</d:Total>
+      </m:properties>
+    </content>
+  </entry>
+</feed>
+```
+
+**Cleaned XML (output):**
+
+```xml
+<feed   >
+  <entry>
+    <content type="application/xml">
+      <properties>
+        <Prom type="Edm.Decimal">5000</Prom>
+        <Total type="Edm.Decimal">15000</Total>
+      </properties>
+    </content>
+  </entry>
+</feed>
+```
+
+<Tip>
+  After cleanup, the XPath `//*[local-name()='Prom']/text()` — or even simply `//Prom/text()` — reliably returns `5000` without any namespace-mapping configuration in the Content Modifier.
+</Tip>
+
+<Warning>
+  This approach performs raw string replacement and does not validate XML well-formedness. If the OData response ever contains `d:` or `m:` as part of element content (not tag names), those occurrences will also be replaced. Validate thoroughly when upgrading adapter versions or changing source systems.
+</Warning>

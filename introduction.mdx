@@ -1,0 +1,46 @@
+---
+title: "Introduction"
+description: "Overview of the Compensaciones integration bundle — what it does, which systems it connects, and the key entities involved."
+---
+
+The **Compensaciones** bundle is a SAP Cloud Platform Integration (CPI) flow that synchronizes employee commission and compensation data between **SAP SuccessFactors** and **SAP S/4HANA**. It implements the HR Infotype 015 (Additional Payments) process by reading active employee job records, retrieving commission totals from S/4HANA, and writing the results back into SuccessFactors as custom certificate information.
+
+## Systems connected
+
+<CardGroup cols={2}>
+  <Card title="SAP SuccessFactors" icon="user">
+    Source and target system. Provides active employee job data (`EmpJob`) and receives updated compensation certificate records (`cust_Info_Certificados`) via OData V2.
+  </Card>
+  <Card title="SAP S/4HANA" icon="database">
+    Commission data source. Exposes the custom OData service `ZHR_CARTAS_SRV` with the `CartaSet` entity, which holds average (`Prom`) and total (`Total`) commission figures per employee.
+  </Card>
+</CardGroup>
+
+## Business purpose
+
+This integration automates the periodic update of **Infotype 015 — Additional Payments** data for active employees. Rather than requiring manual data entry, the flow:
+
+1. Identifies all employees with employment status `1465` (active).
+2. Pulls their latest commission summary from S/4HANA.
+3. Upserts a `cust_Info_Certificados` record in SuccessFactors with the current date and the retrieved commission values.
+
+This keeps compensation certificate data current without human intervention, reducing errors and ensuring payroll-adjacent records stay in sync across both systems.
+
+## Key entities
+
+| Entity | System | Role |
+|---|---|---|
+| `EmpJob` | SAP SuccessFactors | Employee job record; filtered by `emplStatus eq '1465'` to target active employees |
+| `CartaSet` | SAP S/4HANA (`ZHR_CARTAS_SRV`) | Commission letter data; queried per `userId` to retrieve `Prom` (average) and `Total` commission amounts |
+| `cust_Info_Certificados` | SAP SuccessFactors | Custom compensation certificate entity; upserted with `effectiveStartDate`, `externalCode`, `cust_promedioComisiones`, and `cust_totalComisiones` |
+
+## Bundle details
+
+<Info>
+  The integration is packaged as an OSGi bundle with the following identifiers from `META-INF/MANIFEST.MF`:
+
+  - **Bundle-Name:** `Compensaciones`
+  - **Bundle-SymbolicName:** `Compensaciones`
+  - **Bundle-Version:** `1.0.0`
+  - **SAP-BundleType:** `IntegrationFlow`
+</Info>
